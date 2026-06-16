@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pulse — Live News</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== NAVBAR ===== -->
+  <header class="navbar" id="navbar">
+    <div class="navbar__inner">
+
+      <!-- Logo -->
+      <a href="#" class="navbar__logo" onclick="resetToHome(); return false;">
+        <span class="logo-pulse"></span>
+        Pulse
+      </a>
+
+      <!-- Search Bar -->
+      <div class="search-wrap">
+        <input
+          type="text"
+          id="searchInput"
+          class="search-input"
+          placeholder="Search stories…"
+          aria-label="Search news"
+        />
+        <button class="search-btn" id="searchBtn" aria-label="Submit search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Dark Mode Toggle -->
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+        <span class="theme-icon" id="themeIcon">☀️</span>
+      </button>
+
+    </div>
+  </header>
+
+  <!-- ===== CATEGORY BAR ===== -->
+  <nav class="category-bar" id="categoryBar" aria-label="News categories">
+    <div class="category-bar__inner">
+      <button class="cat-btn active" data-category="general">Top Stories</button>
+      <button class="cat-btn" data-category="technology">Technology</button>
+      <button class="cat-btn" data-category="business">Business</button>
+      <button class="cat-btn" data-category="sports">Sports</button>
+      <button class="cat-btn" data-category="health">Health</button>
+      <button class="cat-btn" data-category="science">Science</button>
+      <button class="cat-btn" data-category="entertainment">Entertainment</button>
+    </div>
+  </nav>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main-content">
+
+    <!-- Section heading -->
+    <div class="section-header" id="sectionHeader">
+      <h1 class="section-title" id="sectionTitle">Top Stories</h1>
+      <span class="section-meta" id="sectionMeta"></span>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="loader-wrap" id="loader" aria-live="polite" aria-label="Loading news" hidden>
+      <div class="spinner"></div>
+      <p class="loader-text">Fetching latest stories…</p>
+    </div>
+
+    <!-- Error Message -->
+    <div class="error-wrap" id="errorWrap" hidden>
+      <div class="error-icon">⚡</div>
+      <h2 class="error-title">Something went wrong</h2>
+      <p class="error-msg" id="errorMsg">Unable to fetch news. Please try again.</p>
+      <button class="retry-btn" id="retryBtn">Retry</button>
+    </div>
+
+    <!-- No Results -->
+    <div class="noresults-wrap" id="noResults" hidden>
+      <div class="noresults-icon">🔍</div>
+      <h2 class="noresults-title">No stories found</h2>
+      <p class="noresults-msg">Try a different keyword or category.</p>
+    </div>
+
+    <!-- News Grid -->
+    <div class="news-grid" id="newsGrid" aria-live="polite"></div>
+
+    <!-- Pagination -->
+    <div class="pagination" id="pagination" hidden>
+      <button class="page-btn" id="prevBtn" disabled>← Previous</button>
+      <span class="page-info" id="pageInfo">Page 1</span>
+      <button class="page-btn" id="nextBtn">Next →</button>
+    </div>
+
+  </main>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <p>Powered by <a href="https://newsapi.org" target="_blank" rel="noopener">NewsAPI</a> · Built with Vanilla JS</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
