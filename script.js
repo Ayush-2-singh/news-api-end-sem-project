@@ -1,8 +1,7 @@
 /* ============================================================
    PULSE NEWS APP — script.js
-   API: GNews (gnews.io) — works on deployed sites, no CORS issues
-   Architecture: Modular functions, async/await, localStorage cache,
-   debounced search, pagination, dark mode.
+   API: NewsData.io — CORS allowed on deployed sites ✅
+   Free plan: 200 requests/day
    ============================================================ */
 
 "use strict";
@@ -11,23 +10,20 @@
    1. CONFIGURATION
    ============================================================ */
 
-// 🔑 Your GNews API key from https://gnews.io
-const API_KEY = "5eea2bb80306f73c0a60d76c1d53ddc4";
+// 🔑 NewsData.io API key
+const API_KEY  = "pub_8e4f2f86438b495a9fa3be161518afb5";
+const BASE_URL = "https://newsdata.io/api/1";
 
-const BASE_URL = "https://gnews.io/api/v4";
-
-// GNews free plan max is 10 per request
 const PAGE_SIZE = 9;
-
 const PLACEHOLDER_IMG = "https://placehold.co/600x400/1A1A1A/9A9590?text=No+Image";
 const CACHE_KEY = "pulse_news_cache";
 
 /* ============================================================
    2. CATEGORY MAP
-   GNews category names differ slightly from NewsAPI
+   NewsData.io category names
    ============================================================ */
 const CATEGORY_MAP = {
-  general:       "general",
+  general:       "top",
   technology:    "technology",
   business:      "business",
   sports:        "sports",
@@ -42,7 +38,9 @@ const CATEGORY_MAP = {
 const state = {
   currentCategory: "general",
   currentQuery:    "",
-  currentPage:     1,
+  currentPage:     1,       // NewsData uses cursor-based pagination (nextPage token)
+  nextPageToken:   null,    // NewsData returns a `nextPage` string token
+  prevPageTokens:  [],      // stack to go back
   totalResults:    0,
   articles:        [],
   lastRetryAction: null,
@@ -73,61 +71,61 @@ const DOM = {
 };
 
 /* ============================================================
-   5. API — GNews
+   5. API — NewsData.io
+   
+   Response shape:
+   {
+     status: "success",
+     totalResults: number,
+     results: [{ title, description, link, image_url, pubDate, source_name, ... }],
+     nextPage: "token_string" | null
+   }
    ============================================================ */
-
-/**
- * fetchNews()
- * Calls GNews API for either search or top-headlines.
- *
- * GNews response shape:
- * {
- *   totalArticles: number,
- *   articles: [{ title, description, url, image, publishedAt, source: { name, url } }]
- * }
- *
- * We normalize it to match the rest of our code.
- */
-async function fetchNews(query = "", category = "general", page = 1) {
+async function fetchNews(query = "", category = "general", pageToken = null) {
   let url;
-
-  // GNews free plan doesn't support true pagination offset,
-  // so we fetch max and slice — works fine for free tier
-  const max = PAGE_SIZE;
+  const cat = CATEGORY_MAP[category] || "top";
 
   if (query.trim()) {
-    // Search mode
-    url = `${BASE_URL}/search?q=${encodeURIComponent(query)}&lang=en&max=${max}&apikey=${API_KEY}`;
+    // Search mode — /news endpoint with q param
+    url = `${BASE_URL}/news?q=${encodeURIComponent(query)}&language=en&apikey=${API_KEY}`;
   } else {
-    // Category / top-headlines mode
-    const cat = CATEGORY_MAP[category] || "general";
-    url = `${BASE_URL}/top-headlines?category=${cat}&lang=en&max=${max}&apikey=${API_KEY}`;
+    // Category / latest news mode
+    url = `${BASE_URL}/news?category=${cat}&language=en&apikey=${API_KEY}`;
+  }
+
+  // NewsData uses cursor-based pagination via `page` token
+  if (pageToken) {
+    url += `&page=${pageToken}`;
   }
 
   const response = await fetch(url);
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.errors?.[0] || `Request failed (${response.status})`);
+    throw new Error(errData.results?.message || `Request failed (${response.status})`);
   }
 
   const data = await response.json();
 
-  // GNews uses `image` not `urlToImage` — normalize here so
-  // the rest of the code doesn't need to change
-  const normalized = (data.articles || []).map((a) => ({
+  if (data.status !== "success") {
+    throw new Error(data.results?.message || "API returned an error");
+  }
+
+  // Normalize to our standard shape
+  const normalized = (data.results || []).map((a) => ({
     title:       a.title,
     description: a.description,
-    url:         a.url,
-    urlToImage:  a.image,           // normalize field name
-    publishedAt: a.publishedAt,
-    source:      { name: a.source?.name || "Unknown" },
-  }));
+    url:         a.link,
+    urlToImage:  a.image_url,
+    publishedAt: a.pubDate,
+    source:      { name: a.source_name || a.source_id || "Unknown" },
+  })).filter(a => a.title && a.title !== "[Removed]");
 
   return {
-    status:       "ok",
-    articles:     normalized,
-    totalResults: data.totalArticles || normalized.length,
+    status:        "ok",
+    articles:      normalized,
+    totalResults:  data.totalResults || normalized.length,
+    nextPageToken: data.nextPage || null,
   };
 }
 
@@ -149,11 +147,11 @@ function hideLoader() {
 
 function showError(message, retryFn) {
   hideLoader();
-  DOM.errorMsg.textContent  = message;
-  DOM.errorWrap.hidden      = false;
-  DOM.newsGrid.hidden       = true;
-  DOM.pagination.hidden     = true;
-  state.lastRetryAction     = retryFn;
+  DOM.errorMsg.textContent = message;
+  DOM.errorWrap.hidden     = false;
+  DOM.newsGrid.hidden      = true;
+  DOM.pagination.hidden    = true;
+  state.lastRetryAction    = retryFn;
 }
 
 function showNoResults() {
@@ -182,11 +180,10 @@ function formatDate(isoString) {
 
 function createCard(article) {
   const { title, description, urlToImage, url, publishedAt, source } = article;
+  if (!title) return null;
 
-  if (!title || title === "[Removed]") return null;
-
-  const card      = document.createElement("article");
-  card.className  = "news-card";
+  const card     = document.createElement("article");
+  card.className = "news-card";
 
   const imgSrc     = urlToImage || PLACEHOLDER_IMG;
   const sourceName = source?.name || "Unknown";
@@ -247,43 +244,51 @@ function renderNews(articles) {
 
 /* ============================================================
    8. PAGINATION
+   NewsData uses cursor tokens, not page numbers.
+   We maintain a stack of previous tokens to go back.
    ============================================================ */
 
 function updatePagination() {
-  const totalPages = Math.ceil(state.totalResults / PAGE_SIZE);
+  const hasNext = !!state.nextPageToken;
+  const hasPrev = state.prevPageTokens.length > 0;
 
-  if (totalPages <= 1) {
+  if (!hasNext && !hasPrev) {
     DOM.pagination.hidden = true;
     return;
   }
 
   DOM.pagination.hidden    = false;
-  DOM.pageInfo.textContent = `Page ${state.currentPage} of ${totalPages}`;
-  DOM.prevBtn.disabled     = state.currentPage <= 1;
-  DOM.nextBtn.disabled     = state.currentPage >= totalPages;
+  DOM.pageInfo.textContent = `Page ${state.currentPage}`;
+  DOM.prevBtn.disabled     = !hasPrev;
+  DOM.nextBtn.disabled     = !hasNext;
 }
 
-DOM.prevBtn.addEventListener("click", () => {
-  if (state.currentPage > 1) {
-    state.currentPage--;
-    loadCurrentView();
-  }
+// Next page — use the nextPageToken
+DOM.nextBtn.addEventListener("click", () => {
+  if (!state.nextPageToken) return;
+  // Push current token to stack so we can go back
+  state.prevPageTokens.push(state.currentTokenUsed || null);
+  state.currentPage++;
+  loadCurrentView(state.nextPageToken);
 });
 
-DOM.nextBtn.addEventListener("click", () => {
-  const totalPages = Math.ceil(state.totalResults / PAGE_SIZE);
-  if (state.currentPage < totalPages) {
-    state.currentPage++;
-    loadCurrentView();
-  }
+// Previous page — pop from stack
+DOM.prevBtn.addEventListener("click", () => {
+  if (state.prevPageTokens.length === 0) return;
+  const prevToken = state.prevPageTokens.pop();
+  state.currentPage--;
+  loadCurrentView(prevToken);
 });
 
 /* ============================================================
    9. CORE LOAD
    ============================================================ */
 
-async function loadCurrentView() {
+async function loadCurrentView(pageToken = null) {
   showLoader();
+
+  // Track which token we used for this load
+  state.currentTokenUsed = pageToken;
 
   if (state.currentQuery.trim()) {
     DOM.sectionTitle.textContent = `Results for "${state.currentQuery}"`;
@@ -293,10 +298,11 @@ async function loadCurrentView() {
   }
 
   try {
-    const data = await fetchNews(state.currentQuery, state.currentCategory, state.currentPage);
+    const data = await fetchNews(state.currentQuery, state.currentCategory, pageToken);
 
-    state.totalResults = data.totalResults || 0;
-    state.articles     = data.articles || [];
+    state.totalResults  = data.totalResults || 0;
+    state.articles      = data.articles || [];
+    state.nextPageToken = data.nextPageToken || null;
 
     DOM.sectionMeta.textContent = state.totalResults
       ? `${state.totalResults.toLocaleString()} stories`
@@ -308,11 +314,11 @@ async function loadCurrentView() {
 
   } catch (err) {
     const cached = loadFromCache();
-    if (cached && state.currentPage === 1 && !state.currentQuery) {
+    if (cached && !pageToken && !state.currentQuery) {
       renderNews(cached);
       DOM.sectionMeta.textContent = "(showing cached results)";
     } else {
-      showError(err.message || "Network error. Check your connection.", loadCurrentView);
+      showError(err.message || "Network error. Check your connection.", () => loadCurrentView(pageToken));
     }
     console.error("Pulse fetchNews error:", err);
   }
@@ -329,10 +335,12 @@ DOM.catBtns.forEach((btn) => {
     DOM.catBtns.forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
 
-    state.currentCategory = btn.dataset.category;
-    state.currentQuery    = "";
-    state.currentPage     = 1;
-    DOM.searchInput.value = "";
+    state.currentCategory  = btn.dataset.category;
+    state.currentQuery     = "";
+    state.currentPage      = 1;
+    state.nextPageToken    = null;
+    state.prevPageTokens   = [];
+    DOM.searchInput.value  = "";
 
     loadCurrentView();
   });
@@ -351,8 +359,10 @@ function triggerSearch() {
     return;
   }
 
-  state.currentQuery = query;
-  state.currentPage  = 1;
+  state.currentQuery   = query;
+  state.currentPage    = 1;
+  state.nextPageToken  = null;
+  state.prevPageTokens = [];
   DOM.catBtns.forEach((b) => b.classList.remove("active"));
   loadCurrentView();
 }
@@ -363,14 +373,16 @@ DOM.searchInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") triggerSearch();
 });
 
-// Debounced auto-search (500ms after user stops typing)
+// Debounced auto-search (500ms)
 DOM.searchInput.addEventListener("input", () => {
   clearTimeout(state.debounceTimer);
   state.debounceTimer = setTimeout(() => {
     const query = DOM.searchInput.value.trim();
     if (query.length >= 3) {
-      state.currentQuery = query;
-      state.currentPage  = 1;
+      state.currentQuery   = query;
+      state.currentPage    = 1;
+      state.nextPageToken  = null;
+      state.prevPageTokens = [];
       DOM.catBtns.forEach((b) => b.classList.remove("active"));
       loadCurrentView();
     }
@@ -407,8 +419,7 @@ function initTheme() {
   if (saved) {
     applyTheme(saved);
   } else {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    applyTheme(prefersDark ? "dark" : "light");
+    applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   }
 }
 
@@ -447,6 +458,8 @@ function resetToHome() {
   state.currentQuery    = "";
   state.currentCategory = "general";
   state.currentPage     = 1;
+  state.nextPageToken   = null;
+  state.prevPageTokens  = [];
   DOM.searchInput.value = "";
 
   DOM.catBtns.forEach((b) => b.classList.remove("active"));
@@ -466,17 +479,16 @@ async function init() {
 
   const cached = loadFromCache();
   if (cached && cached.length > 0) {
-    state.articles     = cached;
-    state.totalResults = cached.length;
+    state.articles = cached;
     renderNews(cached);
     DOM.sectionMeta.textContent = "(from cache — refreshing…)";
 
     try {
-      const data = await fetchNews("", "general", 1);
-      state.totalResults = data.totalResults || 0;
-      state.articles     = data.articles || [];
+      const data = await fetchNews("", "general", null);
+      state.articles      = data.articles || [];
+      state.nextPageToken = data.nextPageToken || null;
       renderNews(state.articles);
-      DOM.sectionMeta.textContent = `${state.totalResults.toLocaleString()} stories`;
+      DOM.sectionMeta.textContent = `${(data.totalResults || 0).toLocaleString()} stories`;
       saveToCache(state.articles);
     } catch {
       DOM.sectionMeta.textContent = "(cached results)";
